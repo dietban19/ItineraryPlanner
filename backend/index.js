@@ -3,6 +3,8 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { rateLimit } from 'express-rate-limit';
 import placeImagesRouter from './server/routes/placeImages.routes.js';
+import placeCacheRouter from './server/routes/placeCache.routes.js';
+import { connectDB } from './server/config/db.js';
 
 dotenv.config();
 
@@ -36,22 +38,35 @@ const placesLimiter = rateLimit({
 app.use('/api/place-image', placesLimiter);
 app.use('/api/places', placesLimiter);
 app.use('/api', placeImagesRouter);
+app.use('/api', placeCacheRouter);
 
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
 
-const server = app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+// Global error handler
+app.use((err, _req, res, _next) => {
+  console.error(err.stack ?? err.message ?? err);
+  const status = err.status ?? err.statusCode ?? 500;
+  res.status(status).json({ error: err.message ?? 'Internal server error' });
 });
 
-server.on('error', (err) => {
-  console.error('Server error:', err);
-});
+async function start() {
+  await connectDB();
+  const server = app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+  });
 
-server.on('close', () => {
-  console.log('Server closed');
-});
+  server.on('error', (err) => {
+    console.error('Server error:', err);
+  });
+
+  server.on('close', () => {
+    console.log('Server closed');
+  });
+}
+
+start();
 
 process.on('uncaughtException', (err) => {
   console.error('Uncaught exception:', err);

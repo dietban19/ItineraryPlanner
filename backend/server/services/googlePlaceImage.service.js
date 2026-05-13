@@ -1,3 +1,14 @@
+import PlaceCache from '../models/PlaceCache.js';
+import ApiLog from '../models/ApiLog.js';
+
+async function logApiCall(apiName) {
+  await ApiLog.findOneAndUpdate(
+    { apiName },
+    { $push: { calls: { calledAt: new Date() } } },
+    { upsert: true },
+  );
+}
+
 const PLACES_SEARCH_URL = 'https://places.googleapis.com/v1/places:searchText';
 
 // In-memory cache with TTL to avoid redundant (billable) Google API calls
@@ -22,8 +33,10 @@ function cacheSet(key, value) {
 // The /media endpoint responds with a 302 redirect — following it server-side avoids
 // exposing the API key to browsers and prevents intermittent load failures.
 async function resolvePhotoUrl(photoName, maxWidthPx) {
+  console.log('RESOLVE PHOTO URL');
   const apiUrl = `https://places.googleapis.com/v1/${photoName}/media?maxWidthPx=${maxWidthPx}&key=${process.env.GOOGLE_MAPS_API_KEY}`;
   try {
+    await logApiCall('resolvePhotoUrl');
     const res = await fetch(apiUrl, { redirect: 'manual' });
     const location = res.headers.get('location');
     if (location) return location;
@@ -59,7 +72,6 @@ export async function getGooglePlaceImage({
   type = 'activity',
   maxWidthPx = 900,
 }) {
-  console.log('\n\nGET GOOGLE PLACE]n\n');
   const typeHint =
     type === 'restaurant'
       ? 'restaurant'
@@ -74,6 +86,7 @@ export async function getGooglePlaceImage({
   const cached = cacheGet(cacheKey);
   if (cached !== undefined) return cached;
 
+  await logApiCall('getGooglePlaceImage:searchText');
   const response = await fetch(PLACES_SEARCH_URL, {
     method: 'POST',
     headers: {
@@ -103,10 +116,11 @@ export async function getGooglePlaceImage({
     placeName: place.displayName?.text ?? placeName ?? destination,
     address: place.formattedAddress ?? null,
     rating: place.rating ?? null,
-    imageUrl: await resolvePhotoUrl(place.photos[0].name, maxWidthPx),
+    // imageUrl: await resolvePhotoUrl(place.photos[0].name, maxWidthPx),
+    imageUrl:
+      'https://upload.wikimedia.org/wikipedia/commons/thumb/6/62/Solid_red.svg/960px-Solid_red.svg.png',
     source: 'google',
   };
-  console.log('\nImage-', result.placeName, result.imageUrl);
   cacheSet(cacheKey, result);
   return result;
 }
@@ -139,6 +153,7 @@ export async function searchGooglePlaces({
   const cached = cacheGet(cacheKey);
   if (cached !== undefined) return cached;
 
+  await logApiCall('searchGooglePlaces:searchText');
   const response = await fetch(PLACES_SEARCH_URL, {
     method: 'POST',
     headers: {
@@ -157,18 +172,34 @@ export async function searchGooglePlaces({
 
   const data = await response.json();
   const places = data.places ?? [];
-
+  const placeIds = places.map((p) => p.id);
+  const cachedDocs = await PlaceCache.find(
+    { placeId: { $in: placeIds }, imageUrl: { $ne: null } },
+    { placeId: 1, imageUrl: 1 },
+  ).lean();
+  const cachedImageMap = new Map(
+    cachedDocs.map((d) => [d.placeId, d.imageUrl]),
+  );
   const results = await Promise.all(
     places
       .filter((p) => p.photos?.length)
-      .map(async (place) => ({
-        placeId: place.id,
-        name: place.displayName?.text ?? '',
-        address: place.formattedAddress ?? null,
-        rating: place.rating ?? null,
-        type: detectType(place),
-        image: await resolvePhotoUrl(place.photos[0].name, maxWidthPx),
-      })),
+      .map(async (place) => {
+        const cachedImage = cachedImageMap.get(place.id);
+        const image = cachedImage
+          ? cachedImage
+          : await resolvePhotoUrl(place.photos[0].name, maxWidthPx);
+        // 'https://upload.wikimedia.org/wikipedia/commons/thumb/e/ec/Green_dark_square.jpg/250px-Green_dark_square.jpg';
+        // Persist the image URL to Firestore for future cache hits (fire-and-forget)
+        return {
+          placeId: place.id,
+          name: place.displayName?.text ?? '',
+          address: place.formattedAddress ?? null,
+          rating: place.rating ?? null,
+          type: detectType(place),
+          // image: await resolvePhotoUrl(place.photos[0].name, maxWidthPx),
+          image,
+        };
+      }),
   );
 
   cacheSet(cacheKey, results);
@@ -187,6 +218,7 @@ export async function getGooglePlaceDetails({ placeId, maxWidthPx = 900 }) {
   const cached = cacheGet(cacheKey);
   if (cached !== undefined) return cached;
 
+  await logApiCall('getGooglePlaceDetails:placeDetails');
   const response = await fetch(
     `https://places.googleapis.com/v1/places/${placeId}`,
     {
@@ -218,7 +250,11 @@ export async function getGooglePlaceDetails({ placeId, maxWidthPx = 900 }) {
     photos: await Promise.all(
       (place.photos ?? [])
         .slice(0, 5)
-        .map((p) => resolvePhotoUrl(p.name, maxWidthPx)),
+        // .map((p) => resolvePhotoUrl(p.name, maxWidthPx)),
+        .map(
+          (p) =>
+            'https://colorcodes.imgix.net/3QevGIJmyHmogKzAiBZD01/1166118fa7cfe276cd831b7f88d4ba5c/baby-blue-color.png',
+        ),
     ),
     reviews: (place.reviews ?? []).slice(0, 5).map((r) => ({
       author: r.authorAttribution?.displayName ?? 'Anonymous',
@@ -227,7 +263,6 @@ export async function getGooglePlaceDetails({ placeId, maxWidthPx = 900 }) {
       time: r.relativePublishTimeDescription ?? '',
     })),
   };
-  console.log('Result Name: ', result.name, result.photos);
   cacheSet(cacheKey, result);
   return result;
 }
