@@ -192,8 +192,29 @@ function getWeatherInfo(code) {
   );
 }
 
-export default function WeatherCard({ weather }) {
-  const { label, Icon, iconColor, bgColor } = getWeatherInfo(weather.code);
+export default function WeatherCard({ weather, loading = false }) {
+  const { label, Icon, iconColor, bgColor } = getWeatherInfo(
+    weather?.code ?? -1,
+  );
+
+  // Skeleton while fetching
+  if (loading || !weather) {
+    return (
+      <article className="rounded-[10px] border border-stone-200 bg-white px-5 py-5">
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex flex-1 flex-col gap-3">
+            <div className="flex items-center gap-3">
+              <div className="h-11 w-11 shrink-0 rounded-full bg-stone-100 animate-pulse" />
+              <div className="h-4 w-24 rounded bg-stone-100 animate-pulse" />
+            </div>
+            <div className="h-4 w-32 rounded bg-stone-100 animate-pulse" />
+            <div className="h-3 w-44 rounded bg-stone-100 animate-pulse" />
+          </div>
+          <div className="h-14 w-16 shrink-0 rounded bg-stone-100 animate-pulse" />
+        </div>
+      </article>
+    );
+  }
 
   return (
     <article className="rounded-[10px] border border-stone-200 bg-white px-5 py-5">

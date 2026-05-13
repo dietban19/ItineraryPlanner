@@ -4,6 +4,8 @@ import dotenv from 'dotenv';
 import { rateLimit } from 'express-rate-limit';
 import placeImagesRouter from './server/routes/placeImages.routes.js';
 import placeCacheRouter from './server/routes/placeCache.routes.js';
+import weatherRouter from './server/routes/weather.routes.js';
+import prayerRouter from './server/routes/prayer.routes.js';
 import { connectDB } from './server/config/db.js';
 
 dotenv.config();
@@ -39,6 +41,8 @@ app.use('/api/place-image', placesLimiter);
 app.use('/api/places', placesLimiter);
 app.use('/api', placeImagesRouter);
 app.use('/api', placeCacheRouter);
+app.use('/api', weatherRouter);
+app.use('/api', prayerRouter);
 
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok' });

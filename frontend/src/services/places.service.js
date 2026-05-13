@@ -206,3 +206,66 @@ export async function getPlaceDetails(placeId) {
 
   return details;
 }
+
+// Session-level cache — weather changes slowly, no need to re-fetch on every render
+const weatherCache = new Map();
+// Session-level cache — prayer times only change daily
+const prayerCache = new Map();
+
+/**
+ * Fetch current weather for a destination from the backend (Open-Meteo via Google Places coords).
+ *
+ * @param {string} destination - e.g. "Calgary, Canada"
+ * @returns {Promise<{ code, temperature, apparentTemperature, high, low, windSpeed } | null>}
+ */
+export async function getWeather(destination) {
+  if (!destination) return null;
+
+  const key = destination.toLowerCase().trim();
+  if (weatherCache.has(key)) return weatherCache.get(key);
+
+  try {
+    const url = new URL(`${API_BASE}/weather`);
+    url.searchParams.set('destination', destination);
+
+    const res = await fetch(url.toString());
+    if (!res.ok) return null;
+
+    const data = await res.json();
+    const weather = data.weather ?? null;
+    weatherCache.set(key, weather);
+    return weather;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetch today's prayer times for a destination from the backend (Aladhan API).
+ *
+ * @param {string} destination - e.g. "Calgary, Canada"
+ * @param {number} [method=2]  - Aladhan calculation method
+ * @returns {Promise<{ timings: object, date: object, meta: object } | null>}
+ */
+export async function getPrayerTimes(destination, method = 2) {
+  if (!destination) return null;
+
+  const key = `${destination.toLowerCase().trim()}:${method}`;
+  if (prayerCache.has(key)) return prayerCache.get(key);
+
+  try {
+    const url = new URL(`${API_BASE}/prayer-times`);
+    url.searchParams.set('destination', destination);
+    url.searchParams.set('method', method);
+
+    const res = await fetch(url.toString());
+    if (!res.ok) return null;
+
+    const data = await res.json();
+    const prayerTimes = data.prayerTimes ?? null;
+    prayerCache.set(key, prayerTimes);
+    return prayerTimes;
+  } catch {
+    return null;
+  }
+}

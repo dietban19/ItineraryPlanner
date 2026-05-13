@@ -1,10 +1,30 @@
 import { Zap, Wallet, ChevronRight } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { useTrip } from '../../context/TripContext';
 import WeatherCard from './WeatherCard';
 import PrayerTimesCard from './PrayerTimesCard';
+import { getWeather, getPrayerTimes } from '../../services/places.service';
 
 export default function OverviewTab({ tripId }) {
   const trip = useTrip(tripId);
+
+  const [weather, setWeather] = useState(undefined); // undefined=loading, null=unavailable, object=loaded
+  const [prayerTimes, setPrayerTimes] = useState(undefined);
+
+  useEffect(() => {
+    if (!trip?.destination) return;
+    getWeather(trip.destination)
+      .then(setWeather)
+      .catch(() => setWeather(null));
+  }, [trip?.destination]);
+
+  useEffect(() => {
+    if (!trip?.destination) return;
+    getPrayerTimes(trip.destination)
+      .then(setPrayerTimes)
+      .catch(() => setPrayerTimes(null));
+  }, [trip?.destination]);
+
   if (!trip) return null;
 
   const tripEnergy = trip.tripEnergy;
@@ -21,35 +41,6 @@ export default function OverviewTab({ tripId }) {
       : tripEnergy === 100
         ? `All ${totalActivities} activities completed!`
         : `${completedActivities} of ${totalActivities} activities completed`;
-
-  // TODO: Replace with actual prayer times data from backend (Aladhan API)
-  const prayerTimes = {
-    timings: {
-      Fajr: '03:41',
-      Sunrise: '05:49',
-      Dhuhr: '13:33',
-      Asr: '17:43',
-      Maghrib: '21:17',
-      Isha: '23:25',
-    },
-    date: {
-      readable: '13 May 2026',
-      hijri: {
-        day: '26',
-        month: { en: 'Dhū al-Qaʿdah' },
-        year: '1447',
-      },
-    },
-  };
-
-  // TODO: Replace with actual weather data from backend (Open-Meteo)
-  const weather = {
-    code: 51,
-    temperature: 22,
-    high: 24,
-    low: 16,
-    windSpeed: 12,
-  };
 
   return (
     <section className="bg-[#FAFAF8] px-4 pt-7 pb-10">
@@ -76,9 +67,9 @@ export default function OverviewTab({ tripId }) {
           showChevron={budgetTotal === 0}
         />
 
-        <WeatherCard weather={weather} />
+        <WeatherCard weather={weather} loading={weather === undefined} />
 
-        <PrayerTimesCard prayerTimes={prayerTimes} />
+        {prayerTimes && <PrayerTimesCard prayerTimes={prayerTimes} />}
       </div>
     </section>
   );
