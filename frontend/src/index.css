@@ -1,0 +1,47 @@
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Inter:wght@400;500;600;700;800&display=swap');
+
+@import 'tailwindcss';
+@theme {
+  --font-sans: 'Inter', system-ui, sans-serif;
+  --font-display: 'Cormorant Garamond', Georgia, serif;
+}
+* {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  /* overscroll-behavior: none alone sometimes fails on iOS Safari */
+  /* fixed position is the "nuclear option" to prevent the background from moving */
+  position: fixed;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  -webkit-text-size-adjust: 100%;
+}
+
+#root {
+  /* Using 100dvh is good, but height should be fixed to the viewport */
+  height: 100dvh;
+  width: 100vw;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden; /* Prevent the root itself from scrolling */
+}
+
+/* Create a standard class for your scrollable content areas */
+.scroll-container {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch; /* Smooth inertia scrolling */
+}
+
+/* Force inputs to 16px to prevent the Safari "Zoom-on-Focus" jump */
+input,
+textarea,
+select {
+  font-size: 16px !important;
+}
