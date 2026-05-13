@@ -1,5 +1,6 @@
 import PlaceCache from '../models/PlaceCache.js';
 import ApiLog from '../models/ApiLog.js';
+import { readCachedDetails, persistDetails } from './placeCache.service.js';
 
 async function logApiCall(apiName) {
   await ApiLog.findOneAndUpdate(
@@ -213,10 +214,18 @@ export async function searchGooglePlaces({
  * @returns {Promise<object | null>}
  */
 export async function getGooglePlaceDetails({ placeId, maxWidthPx = 900 }) {
-  console.log('\n\nGET GOOGLE PLACE DETAILS\n\n');
   const cacheKey = `details|${placeId}`.toLowerCase();
+
+  // 1. In-memory cache (fastest)
   const cached = cacheGet(cacheKey);
   if (cached !== undefined) return cached;
+
+  // 2. MongoDB cache — includes previously resolved photo URLs
+  const dbCached = await readCachedDetails(placeId);
+  if (dbCached) {
+    cacheSet(cacheKey, dbCached);
+    return dbCached;
+  }
 
   await logApiCall('getGooglePlaceDetails:placeDetails');
   const response = await fetch(
@@ -251,10 +260,7 @@ export async function getGooglePlaceDetails({ placeId, maxWidthPx = 900 }) {
       (place.photos ?? [])
         .slice(0, 5)
         // .map((p) => resolvePhotoUrl(p.name, maxWidthPx)),
-        .map(
-          (p) =>
-            'https://colorcodes.imgix.net/3QevGIJmyHmogKzAiBZD01/1166118fa7cfe276cd831b7f88d4ba5c/baby-blue-color.png',
-        ),
+        .map((p) => resolvePhotoUrl(p.name, maxWidthPx)),
     ),
     reviews: (place.reviews ?? []).slice(0, 5).map((r) => ({
       author: r.authorAttribution?.displayName ?? 'Anonymous',
@@ -264,5 +270,9 @@ export async function getGooglePlaceDetails({ placeId, maxWidthPx = 900 }) {
     })),
   };
   cacheSet(cacheKey, result);
+
+  // Persist to MongoDB — resolved photo URLs survive server restarts (fire-and-forget)
+  persistDetails(placeId, result);
+
   return result;
 }

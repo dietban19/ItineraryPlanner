@@ -32,3 +32,16 @@ export async function readCachedDetails(placeId) {
     return null;
   }
 }
+
+export async function persistDetails(placeId, details) {
+  if (!placeId || !details) return;
+  try {
+    await PlaceCache.findOneAndUpdate(
+      { placeId },
+      { $set: { details, detailsCachedAt: new Date() } },
+      { upsert: true },
+    );
+  } catch {
+    // silently ignore — caching is best-effort
+  }
+}
