@@ -318,6 +318,7 @@ function AddActivityDrawer({ open, destination, onClose, onAdd }) {
   const [popularRestaurants, setPopularRestaurants] = useState([]);
   const [loadingPopular, setLoadingPopular] = useState(false);
   const hasFetchedRef = useRef(false);
+  const [seeMoreOpen, setSeeMoreOpen] = useState(null); // null | 'activities' | 'restaurants'
 
   // Fetch popular places when the drawer first opens
   useEffect(() => {
@@ -326,8 +327,8 @@ function AddActivityDrawer({ open, destination, onClose, onAdd }) {
     setLoadingPopular(true);
 
     Promise.all([
-      searchPlaces({ destination, type: 'activity', maxResults: 8 }),
-      searchPlaces({ destination, type: 'restaurant', maxResults: 8 }),
+      searchPlaces({ destination, type: 'activity', maxResults: 20 }),
+      searchPlaces({ destination, type: 'restaurant', maxResults: 20 }),
     ])
       .then(([acts, rests]) => {
         setPopularActivities(acts);
@@ -380,6 +381,7 @@ function AddActivityDrawer({ open, destination, onClose, onAdd }) {
       setQuery('');
       setSearchResults(null);
       setSelectedPlace(null);
+      setSeeMoreOpen(null);
     }
   }, [open]);
 
@@ -512,6 +514,14 @@ function AddActivityDrawer({ open, destination, onClose, onAdd }) {
                           : `Popular around ${destination.split(',')[0]}`}
                       </p>
                     </div>
+                    {displayActivities.length > 4 && (
+                      <button
+                        onClick={() => setSeeMoreOpen('activities')}
+                        className="text-[13px] font-medium text-stone-500 active:text-stone-800"
+                      >
+                        See more
+                      </button>
+                    )}
                   </div>
 
                   <div className="-mx-5 overflow-x-auto px-5 pb-2">
@@ -552,6 +562,14 @@ function AddActivityDrawer({ open, destination, onClose, onAdd }) {
                           : `Popular around ${destination.split(',')[0]}`}
                       </p>
                     </div>
+                    {displayRestaurants.length > 4 && (
+                      <button
+                        onClick={() => setSeeMoreOpen('restaurants')}
+                        className="text-[13px] font-medium text-stone-500 active:text-stone-800"
+                      >
+                        See more
+                      </button>
+                    )}
                   </div>
 
                   <div className="-mx-5 overflow-x-auto px-5 pb-2">
@@ -581,6 +599,43 @@ function AddActivityDrawer({ open, destination, onClose, onAdd }) {
             </>
           )}
         </div>
+
+        {/* See more grid overlay */}
+        {seeMoreOpen && (
+          <SeeMoreGrid
+            title={
+              seeMoreOpen === 'activities' ? 'Things to do' : 'Restaurants'
+            }
+            subtitle={
+              displaySearchResults
+                ? `Results near ${destination.split(',')[0]}`
+                : `Popular around ${destination.split(',')[0]}`
+            }
+            items={
+              seeMoreOpen === 'activities'
+                ? displayActivities
+                : displayRestaurants
+            }
+            onClose={() => setSeeMoreOpen(null)}
+            onAdd={(item) =>
+              onAdd({
+                name: item.name,
+                image: item.image,
+                rating: item.rating,
+                placeId: item.placeId ?? null,
+                type:
+                  item.type ??
+                  (seeMoreOpen === 'restaurants' ? 'restaurant' : 'activity'),
+                time: item.time ?? '',
+                _id: item.placeId ?? item._id,
+              })
+            }
+            onViewDetail={(item) => {
+              setSeeMoreOpen(null);
+              setSelectedPlace(item);
+            }}
+          />
+        )}
       </section>
 
       {/* Place detail sheet — slides in from the right over the drawer */}
@@ -612,7 +667,7 @@ function SuggestedActivityCard({ activity, onAdd, onViewDetail }) {
   const [imgFailed, setImgFailed] = useState(false);
 
   return (
-    <article className="w-[150px] shrink-0" onClick={onViewDetail}>
+    <article className="w-[220px] shrink-0" onClick={onViewDetail}>
       <div className="relative aspect-[4/3] overflow-hidden rounded-[16px] bg-stone-100">
         {activity.image && !imgFailed ? (
           <img
@@ -650,6 +705,147 @@ function SuggestedActivityCard({ activity, onAdd, onViewDetail }) {
           <Star size={11} fill="currentColor" strokeWidth={0} />
           <span>{activity.rating}</span>
         </div>
+      </div>
+    </article>
+  );
+}
+
+function SeeMoreGrid({ title, subtitle, items, onClose, onAdd, onViewDetail }) {
+  const BATCH = 6;
+  const [visibleCount, setVisibleCount] = useState(BATCH);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [entered, setEntered] = useState(false);
+  const sentinelRef = useRef(null);
+
+  useEffect(() => {
+    requestAnimationFrame(() => setEntered(true));
+  }, []);
+
+  // Reset when switching between categories
+  useEffect(() => {
+    setVisibleCount(BATCH);
+  }, [items]);
+
+  const visibleItems = items.slice(0, visibleCount);
+  const hasMore = visibleCount < items.length;
+
+  useEffect(() => {
+    if (!sentinelRef.current || !hasMore) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && !loadingMore) {
+          setLoadingMore(true);
+          setTimeout(() => {
+            setVisibleCount((c) => c + BATCH);
+            setLoadingMore(false);
+          }, 600);
+        }
+      },
+      { threshold: 0.1 },
+    );
+    observer.observe(sentinelRef.current);
+    return () => observer.disconnect();
+  }, [hasMore, loadingMore]);
+
+  return (
+    <div
+      className={`absolute inset-0 z-10 flex flex-col rounded-t-[32px] bg-[#FAFAF8] transition-transform duration-300 ${
+        entered ? 'translate-x-0' : 'translate-x-full'
+      }`}
+    >
+      {/* Header */}
+      <div className="shrink-0 px-5 pb-4 pt-3">
+        <div className="mx-auto mb-4 h-1 w-11 rounded-full bg-stone-300" />
+        <div className="flex items-center gap-3">
+          <button
+            onClick={onClose}
+            className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-white text-stone-600"
+            aria-label="Back"
+          >
+            <ArrowLeft size={17} strokeWidth={1.9} />
+          </button>
+          <div>
+            <p className="text-[18px] font-semibold leading-none text-stone-950">
+              {title}
+            </p>
+            <p className="mt-1 text-xs text-stone-400">{subtitle}</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Scrollable grid */}
+      <div className="flex-1 overflow-y-auto px-5 pb-6">
+        <div className="grid grid-cols-2 gap-3">
+          {visibleItems.map((item, i) => (
+            <GridActivityCard
+              key={item.placeId ?? item._id ?? i}
+              activity={item}
+              onAdd={() => onAdd(item)}
+              onViewDetail={() => onViewDetail(item)}
+            />
+          ))}
+
+          {/* Skeleton cards while loading next batch */}
+          {loadingMore &&
+            Array.from({ length: 2 }).map((_, i) => (
+              <div key={`skel-${i}`} className="w-full">
+                <div className="aspect-[3/2] rounded-[14px] bg-stone-200/70 animate-pulse" />
+                <div className="mt-2 h-3 w-3/4 rounded-full bg-stone-200/70 animate-pulse" />
+                <div className="mt-1.5 h-3 w-1/4 rounded-full bg-stone-200/70 animate-pulse" />
+              </div>
+            ))}
+        </div>
+
+        {/* Sentinel — triggers next batch when scrolled into view */}
+        {hasMore && <div ref={sentinelRef} className="h-4" />}
+      </div>
+    </div>
+  );
+}
+
+function GridActivityCard({ activity, onAdd, onViewDetail }) {
+  const [imgFailed, setImgFailed] = useState(false);
+
+  return (
+    <article className="w-full" onClick={onViewDetail}>
+      <div className="relative aspect-[6/5] overflow-hidden rounded-[14px] bg-stone-100">
+        {activity.image && !imgFailed ? (
+          <img
+            src={activity.image}
+            alt={activity.name}
+            className="h-full w-full object-cover"
+            onError={() => setImgFailed(true)}
+          />
+        ) : (
+          <div className="grid h-full w-full place-items-center text-stone-300">
+            <MapPin size={24} strokeWidth={1.5} />
+          </div>
+        )}
+
+        <div className="absolute inset-0 bg-gradient-to-b from-black/25 via-transparent to-black/10" />
+
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onAdd();
+          }}
+          className="absolute right-2 top-2 grid h-7 w-7 place-items-center rounded-full bg-white/95 text-stone-950 shadow-sm active:scale-95"
+          aria-label={`Add ${activity.name}`}
+        >
+          <Plus size={14} strokeWidth={2} />
+        </button>
+      </div>
+
+      <div className="mt-1.5">
+        <p className="line-clamp-1 text-[12px] font-semibold leading-tight text-stone-950">
+          {activity.name}
+        </p>
+        {activity.rating && (
+          <div className="mt-0.5 flex items-center gap-1 text-[11px] text-stone-400">
+            <Star size={10} fill="currentColor" strokeWidth={0} />
+            <span>{activity.rating}</span>
+          </div>
+        )}
       </div>
     </article>
   );
