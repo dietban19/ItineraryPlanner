@@ -19,38 +19,69 @@ function placeRef(placeId) {
 
 // Save basic place data (image URL, name, rating…) if not already in Firestore.
 // Fire-and-forget — never awaited so it never blocks the UI.
-async function persistPlaceImage(place) {
+// async function persistPlaceImage(place) {
+//   if (!place?.placeId) return;
+//   try {
+//     const ref = placeRef(place.placeId);
+//     const snap = await getDoc(ref);
+//     if (snap.exists()) return; // already cached
+//     await setDoc(ref, {
+//       placeId: place.placeId,
+//       name: place.name ?? null,
+//       address: place.address ?? null,
+//       rating: place.rating ?? null,
+//       type: place.type ?? 'activity',
+//       imageUrl: place.image ?? null,
+//       cachedAt: Timestamp.now(),
+//       details: null,
+//       detailsCachedAt: null,
+//     });
+//   } catch {
+//     // silently ignore — caching is best-effort
+//   }
+// }
+export async function persistPlaceImage(place) {
   if (!place?.placeId) return;
+
   try {
-    const ref = placeRef(place.placeId);
-    const snap = await getDoc(ref);
-    if (snap.exists()) return; // already cached
-    await setDoc(ref, {
-      placeId: place.placeId,
-      name: place.name ?? null,
-      address: place.address ?? null,
-      rating: place.rating ?? null,
-      type: place.type ?? 'activity',
-      imageUrl: place.image ?? null,
-      cachedAt: Timestamp.now(),
-      details: null,
-      detailsCachedAt: null,
+    await fetch(`${API_BASE}/place-cache`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(place),
     });
   } catch {
     // silently ignore — caching is best-effort
   }
 }
 
+// // Read full details from Firestore. Returns null if missing or stale (> 7 days).
+// async function readCachedDetails(placeId) {
+//   try {
+//     const snap = await getDoc(placeRef(placeId));
+//     if (!snap.exists()) return null;
+//     const data = snap.data();
+//     if (!data.details || !data.detailsCachedAt) return null;
+//     const age = Date.now() - data.detailsCachedAt.toMillis();
+//     if (age > DETAILS_CACHE_TTL_MS) return null;
+//     return data.details;
+//   } catch {
+//     return null;
+//   }
+// }
 // Read full details from Firestore. Returns null if missing or stale (> 7 days).
 async function readCachedDetails(placeId) {
+  console.log('READING CACHED DETAILS');
   try {
-    const snap = await getDoc(placeRef(placeId));
-    if (!snap.exists()) return null;
-    const data = snap.data();
-    if (!data.details || !data.detailsCachedAt) return null;
-    const age = Date.now() - data.detailsCachedAt.toMillis();
-    if (age > DETAILS_CACHE_TTL_MS) return null;
-    return data.details;
+    const response = await fetch(`${API_BASE}/place-cache/details`, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ placeId }),
+    });
+
+    if (!response.ok) return null;
+
+    const data = await response.json();
+    return data.details ?? null;
   } catch {
     return null;
   }
@@ -116,9 +147,14 @@ export async function searchPlaces({
   type = 'activity',
   maxResults = 8,
 }) {
+  console.log('Searching places');
   const cacheKey =
     `${query}|${destination}|${type}|${maxResults}`.toLowerCase();
+  console.log('CACHE KEY: ', cacheKey);
+  console.log(placesSearchCache);
+
   if (placesSearchCache.has(cacheKey)) {
+    console.log('IS THE KEY IN THE CACHE, yes');
     return placesSearchCache.get(cacheKey);
   }
 
@@ -133,7 +169,9 @@ export async function searchPlaces({
   if (!res.ok) throw new Error('Failed to search places');
 
   const data = await res.json();
+  console.log('DATA: ', data);
   const places = data.places ?? [];
+  console.log('Places: ', places);
   placesSearchCache.set(cacheKey, places);
 
   // Persist each place's image URL to Firestore (fire-and-forget).
@@ -150,6 +188,7 @@ export async function searchPlaces({
  * @returns {Promise<object | null>}
  */
 export async function getPlaceDetails(placeId) {
+  console.log('GETTING PLACE DETAILS: ', placeId);
   // 1. Check Firestore — skip the backend call entirely if we have a fresh copy.
   const cached = await readCachedDetails(placeId);
   if (cached) return cached;
