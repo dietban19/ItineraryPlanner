@@ -1,27 +1,25 @@
 // Session-level cache to avoid repeated Geoapify calls for the same query
 const destinationCache = new Map();
 
+const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:5000/api';
+
 export function clearDestinationCache() {
   destinationCache.clear();
 }
 
 export async function searchDestinations(query) {
   const cleanQuery = query.trim();
-  console.log('Query: ', cleanQuery);
   if (!cleanQuery) return [];
 
   if (destinationCache.has(cleanQuery.toLowerCase())) {
     return destinationCache.get(cleanQuery.toLowerCase());
   }
 
-  const url = new URL('https://api.geoapify.com/v1/geocode/autocomplete');
-
+  const url = new URL(`${API_BASE}/geocode/autocomplete`);
   url.searchParams.set('text', cleanQuery);
   url.searchParams.set('limit', '8');
-  url.searchParams.set('format', 'json');
-  url.searchParams.set('apiKey', import.meta.env.VITE_GEOAPIFY_KEY);
-  console.log('URL: ', url);
-  const response = await fetch(url);
+
+  const response = await fetch(url.toString());
 
   if (!response.ok) {
     throw new Error('Failed to search destinations');

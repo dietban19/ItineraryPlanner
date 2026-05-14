@@ -1,5 +1,3 @@
-import ApiLog from '../models/ApiLog.js';
-
 const PLACES_SEARCH_URL = 'https://places.googleapis.com/v1/places:searchText';
 const ALADHAN_URL = 'https://api.aladhan.com/v1/timings';
 
@@ -24,14 +22,6 @@ function cacheSet(map, key, value) {
   map.set(key, { value, ts: Date.now() });
 }
 
-async function logApiCall(apiName) {
-  await ApiLog.findOneAndUpdate(
-    { apiName },
-    { $push: { calls: { calledAt: new Date() } } },
-    { upsert: true },
-  );
-}
-
 /**
  * Resolve lat/lng for a destination string via Google Places searchText.
  * @param {string} destination
@@ -42,7 +32,6 @@ async function getCoordinates(destination) {
   const cached = cacheGet(coordsCache, key, COORDS_TTL_MS);
   if (cached !== undefined) return cached;
 
-  await logApiCall('prayer:getCoordinates');
   const response = await fetch(PLACES_SEARCH_URL, {
     method: 'POST',
     headers: {
@@ -84,7 +73,6 @@ export async function getPrayerTimesForDestination(destination, method = 2) {
 
   const { latitude, longitude } = await getCoordinates(destination);
 
-  await logApiCall('prayer:getPrayerTimes');
   const params = new URLSearchParams({
     latitude,
     longitude,

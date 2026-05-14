@@ -1,6 +1,10 @@
 import PlaceCache from '../models/PlaceCache.js';
 import ApiLog from '../models/ApiLog.js';
-import { readCachedDetails, persistDetails } from './placeCache.service.js';
+import {
+  readCachedDetails,
+  persistDetails,
+  persistPlaceImage,
+} from './placeCache.service.js';
 
 async function logApiCall(apiName) {
   await ApiLog.findOneAndUpdate(
@@ -30,17 +34,27 @@ function cacheSet(key, value) {
   placeCache.set(key, { value, ts: Date.now() });
 }
 
+// In-memory cache for resolved photo CDN URLs — keyed by `photoName|maxWidthPx`.
+// CDN URLs are stable for long periods so a 24-hour TTL is safe.
+const PHOTO_URL_TTL_MS = 24 * 60 * 60 * 1000;
+const photoUrlCache = new Map();
+
 // Resolves a Google photo reference to its final CDN URL (lh3.googleusercontent.com).
 // The /media endpoint responds with a 302 redirect — following it server-side avoids
 // exposing the API key to browsers and prevents intermittent load failures.
 async function resolvePhotoUrl(photoName, maxWidthPx) {
-  console.log('RESOLVE PHOTO URL');
+  const cacheKey = `${photoName}|${maxWidthPx}`;
+  const cached = photoUrlCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < PHOTO_URL_TTL_MS) return cached.url;
+
   const apiUrl = `https://places.googleapis.com/v1/${photoName}/media?maxWidthPx=${maxWidthPx}&key=${process.env.GOOGLE_MAPS_API_KEY}`;
   try {
     await logApiCall('resolvePhotoUrl');
     const res = await fetch(apiUrl, { redirect: 'manual' });
     const location = res.headers.get('location');
-    if (location) return location;
+    const url = location ?? apiUrl;
+    photoUrlCache.set(cacheKey, { url, ts: Date.now() });
+    return url;
   } catch {
     // fall through and return the raw API URL as a last resort
   }
@@ -73,6 +87,7 @@ export async function getGooglePlaceImage({
   type = 'activity',
   maxWidthPx = 900,
 }) {
+  console.log('Getting google');
   const typeHint =
     type === 'restaurant'
       ? 'restaurant'
@@ -117,9 +132,9 @@ export async function getGooglePlaceImage({
     placeName: place.displayName?.text ?? placeName ?? destination,
     address: place.formattedAddress ?? null,
     rating: place.rating ?? null,
-    // imageUrl: await resolvePhotoUrl(place.photos[0].name, maxWidthPx),
-    imageUrl:
-      'https://upload.wikimedia.org/wikipedia/commons/thumb/6/62/Solid_red.svg/960px-Solid_red.svg.png',
+    imageUrl: await resolvePhotoUrl(place.photos[0].name, maxWidthPx),
+    // imageUrl:
+    //   'https://upload.wikimedia.org/wikipedia/commons/thumb/6/62/Solid_red.svg/960px-Solid_red.svg.png',
     source: 'google',
   };
   cacheSet(cacheKey, result);
@@ -129,8 +144,8 @@ export async function getGooglePlaceImage({
 /**
  * Search for multiple places in a destination.
  *
- * @param {{ query?: string, destination?: string, type?: string, maxResults?: number, maxWidthPx?: number }} opts
- * @returns {Promise<Array<{ placeId, name, address, rating, type, image }>>}
+ * @param {{ query?: string, destination?: string, type?: string, maxResults?: number, maxWidthPx?: number, pageToken?: string }} opts
+ * @returns {Promise<{ results: Array<{ placeId, name, address, rating, type, image }>, nextPageToken: string|null }>}
  */
 export async function searchGooglePlaces({
   query = '',
@@ -138,6 +153,7 @@ export async function searchGooglePlaces({
   type = 'activity',
   maxResults = 8,
   maxWidthPx = 600,
+  pageToken = null,
 }) {
   // Cap maxResults to limit API usage and cost
   const safeMaxResults = Math.min(maxResults, 10);
@@ -149,10 +165,17 @@ export async function searchGooglePlaces({
     ? `${query} ${destination}`.trim()
     : `${typeHint} in ${destination}`.trim();
 
-  const cacheKey =
-    `search|${textQuery}|${safeMaxResults}|${maxWidthPx}`.toLowerCase();
+  // Page-token requests bypass the normal cache key (each token is a unique cursor)
+  const cacheKey = pageToken
+    ? `search|pagetoken|${pageToken}`
+    : `search|${textQuery}|${safeMaxResults}|${maxWidthPx}`.toLowerCase();
+
   const cached = cacheGet(cacheKey);
   if (cached !== undefined) return cached;
+
+  const requestBody = pageToken
+    ? { pageToken }
+    : { textQuery, maxResultCount: safeMaxResults };
 
   await logApiCall('searchGooglePlaces:searchText');
   const response = await fetch(PLACES_SEARCH_URL, {
@@ -161,9 +184,9 @@ export async function searchGooglePlaces({
       'Content-Type': 'application/json',
       'X-Goog-Api-Key': process.env.GOOGLE_MAPS_API_KEY,
       'X-Goog-FieldMask':
-        'places.id,places.displayName,places.formattedAddress,places.rating,places.photos,places.primaryType',
+        'places.id,places.displayName,places.formattedAddress,places.rating,places.photos,places.primaryType,nextPageToken',
     },
-    body: JSON.stringify({ textQuery, maxResultCount: safeMaxResults }),
+    body: JSON.stringify(requestBody),
   });
 
   if (!response.ok) {
@@ -173,6 +196,8 @@ export async function searchGooglePlaces({
 
   const data = await response.json();
   const places = data.places ?? [];
+  const nextPageToken = data.nextPageToken ?? null;
+
   const placeIds = places.map((p) => p.id);
   const cachedDocs = await PlaceCache.find(
     { placeId: { $in: placeIds }, imageUrl: { $ne: null } },
@@ -189,22 +214,30 @@ export async function searchGooglePlaces({
         const image = cachedImage
           ? cachedImage
           : await resolvePhotoUrl(place.photos[0].name, maxWidthPx);
-        // 'https://upload.wikimedia.org/wikipedia/commons/thumb/e/ec/Green_dark_square.jpg/250px-Green_dark_square.jpg';
-        // Persist the image URL to Firestore for future cache hits (fire-and-forget)
-        return {
+
+        const result = {
           placeId: place.id,
           name: place.displayName?.text ?? '',
           address: place.formattedAddress ?? null,
           rating: place.rating ?? null,
           type: detectType(place),
-          // image: await resolvePhotoUrl(place.photos[0].name, maxWidthPx),
           image,
         };
+
+        // Persist newly-resolved image URLs to MongoDB so the next request
+        // (even after the in-memory search cache expires) never needs to call
+        // resolvePhotoUrl again for this place. Fire-and-forget.
+        if (!cachedImage) {
+          persistPlaceImage({ ...result, image: result.image }).catch(() => {});
+        }
+
+        return result;
       }),
   );
 
-  cacheSet(cacheKey, results);
-  return results;
+  const payload = { results, nextPageToken };
+  cacheSet(cacheKey, payload);
+  return payload;
 }
 
 /**

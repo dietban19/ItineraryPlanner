@@ -8,17 +8,21 @@ import {
 } from 'react';
 import { Trip, Day, Activity, ActivityReview } from '../models/schemas';
 import { useAuth } from './AuthContext';
+import { auth } from '../lib/firebase';
 import {
-  subscribeToUserTrips,
-  createTrip as firestoreCreateTrip,
-  saveTrip,
-  deleteTrip as firestoreDeleteTrip,
+  fetchUserTrips,
+  createTrip as apiCreateTrip,
+  saveTrip as apiSaveTrip,
+  deleteTrip as apiDeleteTrip,
   joinTripByCode,
-  ensureShareCode as firestoreEnsureShareCode,
+  ensureShareCode as apiEnsureShareCode,
 } from '../services/trip.service';
+import { addMemberToTripChat } from '../services/chat.service';
 import { fetchDestinationImage } from '../services/places.service';
 
 const TripsContext = createContext(null);
+
+const getToken = () => auth.currentUser?.getIdToken();
 
 // ─── Provider ─────────────────────────────────────────────────────────────────
 
@@ -28,7 +32,6 @@ export function TripsProvider({ children }) {
   const [tripsLoading, setTripsLoading] = useState(true);
   const pendingSave = useRef({});
 
-  // Subscribe to the current user's trips in Firestore
   useEffect(() => {
     if (!user) {
       setTrips([]);
@@ -36,17 +39,29 @@ export function TripsProvider({ children }) {
       return;
     }
 
+    let cancelled = false;
     setTripsLoading(true);
-    const unsubscribe = subscribeToUserTrips(user.uid, (plainTrips) => {
-      setTrips(plainTrips.map((t) => new Trip(t)));
-      setTripsLoading(false);
-    });
 
-    return unsubscribe;
+    getToken()
+      .then((token) => fetchUserTrips(token))
+      .then((plainTrips) => {
+        if (!cancelled) {
+          setTrips(plainTrips.map((t) => new Trip(t)));
+          setTripsLoading(false);
+        }
+      })
+      .catch((err) => {
+        console.error(err);
+        if (!cancelled) setTripsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [user]);
 
   /**
-   * Optimistically update one trip in local state, then persist to Firestore.
+   * Optimistically update one trip in local state, then persist to the backend.
    * Debounced 400 ms to batch rapid mutations (e.g. typing in a title).
    */
   const updateTrip = useCallback((tripId, updater) => {
@@ -58,8 +73,13 @@ export function TripsProvider({ children }) {
         clone.updatedAt = new Date().toISOString();
 
         clearTimeout(pendingSave.current[tripId]);
-        pendingSave.current[tripId] = setTimeout(() => {
-          saveTrip(tripId, clone.toJSON()).catch(console.error);
+        pendingSave.current[tripId] = setTimeout(async () => {
+          try {
+            const token = await getToken();
+            await apiSaveTrip(token, tripId, clone.toJSON());
+          } catch (err) {
+            console.error(err);
+          }
         }, 400);
 
         return clone;
@@ -122,7 +142,6 @@ export function TripsProvider({ children }) {
       const activity = day.activities.find((a) => a._id === activityId);
       if (!activity) return;
       activity.reviews.push(new ActivityReview(reviewData));
-      // Auto-mark done when the first review is posted
       if (activity.status !== 'done') activity.status = 'done';
     });
   }
@@ -173,18 +192,8 @@ export function TripsProvider({ children }) {
   function generateDaysFromRange(start, end) {
     const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
     const MONTHS = [
-      'Jan',
-      'Feb',
-      'Mar',
-      'Apr',
-      'May',
-      'Jun',
-      'Jul',
-      'Aug',
-      'Sep',
-      'Oct',
-      'Nov',
-      'Dec',
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
     ];
     const s = new Date(start + 'T00:00:00');
     const e = end ? new Date(end + 'T00:00:00') : s;
@@ -206,7 +215,6 @@ export function TripsProvider({ children }) {
     return days;
   }
 
-  /** Create a new trip in Firestore and optimistically add to local state. */
   async function createTrip({ title, destination, dateRange }) {
     if (!user) return;
     const days = dateRange?.start
@@ -224,70 +232,64 @@ export function TripsProvider({ children }) {
       days,
     });
 
-    // Optimistic update — onSnapshot will reconcile the real ID
+    // Optimistic insert with temp client-side ID
     setTrips((prev) => [newTrip, ...prev]);
 
-    const docId = await firestoreCreateTrip(user.uid, newTrip.toJSON());
-    // Patch local state with the real Firestore document ID
+    const token = await getToken();
+    const saved = await apiCreateTrip(token, newTrip.toJSON());
+
+    // Replace temp ID with the real MongoDB _id
     setTrips((prev) =>
-      prev.map((t) =>
-        t._id === newTrip._id ? new Trip({ ...t.toJSON(), _id: docId }) : t,
-      ),
+      prev.map((t) => (t._id === newTrip._id ? new Trip(saved) : t)),
     );
 
-    // Fetch a real destination image from Google Places in background and save it
+    // Fetch a real destination image in the background
     fetchDestinationImage(destination)
-      .then((imageUrl) => {
+      .then(async (imageUrl) => {
         if (!imageUrl) return;
-        saveTrip(docId, { image: imageUrl, coverImage: imageUrl }).catch(
-          console.error,
-        );
+        const t2 = await getToken();
+        await apiSaveTrip(t2, saved._id, {
+          image: imageUrl,
+          coverImage: imageUrl,
+        }).catch(console.error);
         setTrips((prev) =>
           prev.map((t) =>
-            t._id === docId
-              ? new Trip({
-                  ...t.toJSON(),
-                  image: imageUrl,
-                  coverImage: imageUrl,
-                })
+            t._id === saved._id
+              ? new Trip({ ...t.toJSON(), image: imageUrl, coverImage: imageUrl })
               : t,
           ),
         );
       })
       .catch(console.error);
 
-    return docId;
+    return saved._id;
   }
 
-  /** Remove a trip from local state and Firestore, and unlink it from the user doc. */
   async function removeTrip(tripId) {
     setTrips((prev) => prev.filter((t) => t._id !== tripId));
-    await firestoreDeleteTrip(tripId, user?.uid).catch(console.error);
+    const token = await getToken();
+    await apiDeleteTrip(token, tripId).catch(console.error);
   }
 
-  /**
-   * Join a trip by its share code.
-   * Adds the trip to this user's list and increments the people count.
-   * @param {string} code
-   * @returns {Promise<void>}
-   * @throws {Error} 'not_found' | 'already_member'
-   */
   async function joinTrip(code) {
     if (!user) throw new Error('not_authenticated');
-    const tripId = await joinTripByCode(code, user.uid);
-    // onSnapshot will pick up the new trip automatically
+    const token = await getToken();
+    const tripId = await joinTripByCode(token, code);
+
+    // Chat membership still lives in Firestore — best-effort
+    addMemberToTripChat(tripId, user.uid).catch(console.error);
+
+    // Refresh the trips list so the new trip shows up
+    const freshToken = await getToken();
+    const plainTrips = await fetchUserTrips(freshToken);
+    setTrips(plainTrips.map((t) => new Trip(t)));
+
     return tripId;
   }
 
-  /**
-   * Ensures a trip has a share code. Generates and persists one on-demand if
-   * the trip was created before share codes were introduced.
-   * Patches local state so the UI updates without waiting for onSnapshot.
-   * @param {string} tripId
-   * @returns {Promise<string>} The share code
-   */
   async function ensureShareCode(tripId) {
-    const code = await firestoreEnsureShareCode(tripId);
+    const token = await getToken();
+    const code = await apiEnsureShareCode(token, tripId);
     setTrips((prev) =>
       prev.map((t) =>
         t._id === tripId && !t.shareCode
@@ -298,7 +300,6 @@ export function TripsProvider({ children }) {
     return code;
   }
 
-  /** Update the date range of a trip, regenerating days if the range changed. */
   function updateDateRange(tripId, dateRange) {
     updateTrip(tripId, (trip) => {
       trip.dateRange = {
@@ -311,7 +312,6 @@ export function TripsProvider({ children }) {
           trip.dateRange.start,
           trip.dateRange.end,
         );
-        // Re-use existing day _ids / activities where the day index matches
         trip.days = newDays.map((d, i) => {
           const existing = trip.days[i];
           if (existing) {
@@ -331,7 +331,6 @@ export function TripsProvider({ children }) {
     return trips.find((t) => t._id === id) ?? null;
   }
 
-  /** Trips sorted ascending by start date */
   const upcomingTrips = trips
     .filter((t) => t.status !== 'completed')
     .sort((a, b) =>
@@ -380,10 +379,6 @@ export function useTrips() {
   return ctx;
 }
 
-/**
- * Convenience hook for a single trip.
- * Returns null if the trip is not found.
- */
 export function useTrip(tripId) {
   const { getTripById } = useTrips();
   return getTripById(tripId);

@@ -317,6 +317,8 @@ function AddActivityDrawer({ open, destination, onClose, onAdd }) {
   const [popularActivities, setPopularActivities] = useState([]);
   const [popularRestaurants, setPopularRestaurants] = useState([]);
   const [loadingPopular, setLoadingPopular] = useState(false);
+  const [nextActivityToken, setNextActivityToken] = useState(null);
+  const [nextRestaurantToken, setNextRestaurantToken] = useState(null);
   const hasFetchedRef = useRef(false);
   const [seeMoreOpen, setSeeMoreOpen] = useState(null); // null | 'activities' | 'restaurants'
 
@@ -327,18 +329,50 @@ function AddActivityDrawer({ open, destination, onClose, onAdd }) {
     setLoadingPopular(true);
 
     Promise.all([
-      searchPlaces({ destination, type: 'activity', maxResults: 20 }),
-      searchPlaces({ destination, type: 'restaurant', maxResults: 20 }),
+      searchPlaces({ destination, type: 'activity', maxResults: 10 }),
+      searchPlaces({ destination, type: 'restaurant', maxResults: 10 }),
     ])
-      .then(([acts, rests]) => {
-        setPopularActivities(acts);
-        setPopularRestaurants(rests);
+      .then(([actPayload, restPayload]) => {
+        setPopularActivities(actPayload.places);
+        setNextActivityToken(actPayload.nextPageToken);
+        setPopularRestaurants(restPayload.places);
+        setNextRestaurantToken(restPayload.nextPageToken);
       })
       .catch(() => {
         // silently fall back to empty
       })
       .finally(() => setLoadingPopular(false));
   }, [open, destination]);
+
+  const handleLoadMoreActivities = useCallback(async () => {
+    if (!nextActivityToken) return;
+    try {
+      const payload = await searchPlaces({
+        destination,
+        type: 'activity',
+        pageToken: nextActivityToken,
+      });
+      setPopularActivities((prev) => [...prev, ...payload.places]);
+      setNextActivityToken(payload.nextPageToken);
+    } catch {
+      // silently ignore
+    }
+  }, [destination, nextActivityToken]);
+
+  const handleLoadMoreRestaurants = useCallback(async () => {
+    if (!nextRestaurantToken) return;
+    try {
+      const payload = await searchPlaces({
+        destination,
+        type: 'restaurant',
+        pageToken: nextRestaurantToken,
+      });
+      setPopularRestaurants((prev) => [...prev, ...payload.places]);
+      setNextRestaurantToken(payload.nextPageToken);
+    } catch {
+      // silently ignore
+    }
+  }, [destination, nextRestaurantToken]);
 
   const runSearch = useCallback(
     async (q) => {
@@ -348,12 +382,12 @@ function AddActivityDrawer({ open, destination, onClose, onAdd }) {
       }
       setSearching(true);
       try {
-        const results = await searchPlaces({
+        const { places } = await searchPlaces({
           query: q,
           destination,
           maxResults: 8,
         });
-        setSearchResults(results);
+        setSearchResults(places);
       } catch {
         // silently fall back to suggestions
         setSearchResults(null);
@@ -616,6 +650,17 @@ function AddActivityDrawer({ open, destination, onClose, onAdd }) {
                 ? displayActivities
                 : displayRestaurants
             }
+            hasNextPage={
+              !displaySearchResults &&
+              (seeMoreOpen === 'activities'
+                ? !!nextActivityToken
+                : !!nextRestaurantToken)
+            }
+            onLoadMore={
+              seeMoreOpen === 'activities'
+                ? handleLoadMoreActivities
+                : handleLoadMoreRestaurants
+            }
             onClose={() => setSeeMoreOpen(null)}
             onAdd={(item) =>
               onAdd({
@@ -710,7 +755,16 @@ function SuggestedActivityCard({ activity, onAdd, onViewDetail }) {
   );
 }
 
-function SeeMoreGrid({ title, subtitle, items, onClose, onAdd, onViewDetail }) {
+function SeeMoreGrid({
+  title,
+  subtitle,
+  items,
+  onClose,
+  onAdd,
+  onViewDetail,
+  hasNextPage = false,
+  onLoadMore,
+}) {
   const BATCH = 6;
   const [visibleCount, setVisibleCount] = useState(BATCH);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -727,7 +781,9 @@ function SeeMoreGrid({ title, subtitle, items, onClose, onAdd, onViewDetail }) {
   }, [items]);
 
   const visibleItems = items.slice(0, visibleCount);
-  const hasMore = visibleCount < items.length;
+  // More local items to reveal, OR more pages available from the API
+  const hasMoreLocal = visibleCount < items.length;
+  const hasMore = hasMoreLocal || hasNextPage;
 
   useEffect(() => {
     if (!sentinelRef.current || !hasMore) return;
@@ -735,17 +791,27 @@ function SeeMoreGrid({ title, subtitle, items, onClose, onAdd, onViewDetail }) {
       (entries) => {
         if (entries[0].isIntersecting && !loadingMore) {
           setLoadingMore(true);
-          setTimeout(() => {
-            setVisibleCount((c) => c + BATCH);
-            setLoadingMore(false);
-          }, 600);
+          if (hasMoreLocal) {
+            // Reveal more already-fetched items
+            setTimeout(() => {
+              setVisibleCount((c) => c + BATCH);
+              setLoadingMore(false);
+            }, 300);
+          } else if (hasNextPage && onLoadMore) {
+            // All local items shown — fetch the next page from the API
+            Promise.resolve(onLoadMore()).finally(() => {
+              // After parent appends new items, show them all immediately
+              setVisibleCount((c) => c + BATCH);
+              setLoadingMore(false);
+            });
+          }
         }
       },
       { threshold: 0.1 },
     );
     observer.observe(sentinelRef.current);
     return () => observer.disconnect();
-  }, [hasMore, loadingMore]);
+  }, [hasMore, hasMoreLocal, hasNextPage, loadingMore, onLoadMore]);
 
   return (
     <div

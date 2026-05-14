@@ -23,7 +23,6 @@ export const validatePlaceSearch = (req, res, next) => {
 };
 
 export const validatePlaceDetails = (req, res, next) => {
-  console.log('\n\nGetting Place Details, Middleware');
   const { placeId } = req.query;
   if (!placeId) {
     return res.status(400).json({ error: 'placeId is required' });

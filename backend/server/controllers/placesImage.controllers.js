@@ -23,16 +23,17 @@ export const getPlaceImage = async (req, res, next) => {
 
 export const searchPlaces = async (req, res, next) => {
   try {
-    const { query, destination, type, maxResults } = req.query;
+    const { query, destination, type, maxResults, pageToken } = req.query;
 
-    const places = await searchGooglePlaces({
+    const { results: places, nextPageToken } = await searchGooglePlaces({
       query: query ?? '',
       destination,
       type: type ?? 'activity',
       maxResults: Math.min(maxResults ? parseInt(maxResults, 10) : 8, 10),
+      pageToken: pageToken ?? null,
     });
 
-    res.json({ places });
+    res.json({ places, nextPageToken: nextPageToken ?? null });
   } catch (error) {
     next(error);
   }

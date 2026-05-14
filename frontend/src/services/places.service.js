@@ -110,6 +110,7 @@ async function persistDetails(placeId, details) {
  * @returns {Promise<string | null>}
  */
 export async function fetchDestinationImage(destination) {
+  console.log('FETCHING DESTINATION');
   if (destinationImageCache.has(destination)) {
     return destinationImageCache.get(destination);
   }
@@ -137,48 +138,54 @@ export async function fetchDestinationImage(destination) {
 
 /**
  * Search for places (activities or restaurants) near a destination.
+ * Supports pageToken for pagination — returns { places, nextPageToken }.
+ * For non-paginated (initial) calls, also caches the result session-level.
  *
- * @param {{ query?: string, destination: string, type?: 'activity' | 'restaurant', maxResults?: number }} opts
- * @returns {Promise<Array<{ placeId, name, address, rating, type, image }>>}
+ * @param {{ query?: string, destination: string, type?: 'activity' | 'restaurant', maxResults?: number, pageToken?: string }} opts
+ * @returns {Promise<{ places: Array<{ placeId, name, address, rating, type, image }>, nextPageToken: string|null }>}
  */
 export async function searchPlaces({
   query = '',
   destination,
   type = 'activity',
   maxResults = 8,
+  pageToken = null,
 }) {
-  console.log('Searching places');
-  const cacheKey =
-    `${query}|${destination}|${type}|${maxResults}`.toLowerCase();
-  console.log('CACHE KEY: ', cacheKey);
-  console.log(placesSearchCache);
+  // Page-token requests use the token itself as the cache key
+  const cacheKey = pageToken
+    ? `pagetoken|${pageToken}`
+    : `${query}|${destination}|${type}|${maxResults}`.toLowerCase();
 
   if (placesSearchCache.has(cacheKey)) {
-    console.log('IS THE KEY IN THE CACHE, yes');
     return placesSearchCache.get(cacheKey);
   }
 
   const url = new URL(`${API_BASE}/places/search`);
-  if (query) url.searchParams.set('query', query);
-  url.searchParams.set('destination', destination);
-  url.searchParams.set('type', type);
-  url.searchParams.set('maxResults', String(maxResults));
-  console.log('URL ', url);
+  if (pageToken) {
+    url.searchParams.set('pageToken', pageToken);
+    // destination is still required by the middleware validation
+    url.searchParams.set('destination', destination);
+  } else {
+    if (query) url.searchParams.set('query', query);
+    url.searchParams.set('destination', destination);
+    url.searchParams.set('type', type);
+    url.searchParams.set('maxResults', String(maxResults));
+  }
 
   const res = await fetch(url.toString());
   if (!res.ok) throw new Error('Failed to search places');
 
   const data = await res.json();
-  console.log('DATA: ', data);
   const places = data.places ?? [];
-  console.log('Places: ', places);
-  placesSearchCache.set(cacheKey, places);
+  const nextPageToken = data.nextPageToken ?? null;
 
-  // Persist each place's image URL to Firestore (fire-and-forget).
-  // On subsequent visits the URL is already cached and no extra call is needed.
+  const payload = { places, nextPageToken };
+  placesSearchCache.set(cacheKey, payload);
+
+  // Persist each place's image URL to the backend cache (fire-and-forget).
   places.forEach((p) => persistPlaceImage(p));
 
-  return places;
+  return payload;
 }
 
 /**

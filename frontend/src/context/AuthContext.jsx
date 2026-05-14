@@ -8,7 +8,7 @@ import {
 } from '../services/auth.service';
 import {
   createUserProfile,
-  getUserProfile,
+  syncUserProfile,
   updateUserProfile,
 } from '../services/user.service';
 
@@ -24,7 +24,11 @@ export function AuthProvider({ children }) {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
         setUser(firebaseUser);
-        const profile = await getUserProfile(firebaseUser.uid);
+        // Get a fresh ID token — this validates the session with Firebase
+        const idToken = await firebaseUser.getIdToken();
+        // Sync with MongoDB: upserts the user if not present, returns the record
+        const profile = await syncUserProfile(idToken);
+        console.log('GOT PROFILE: ', profile);
         setUserProfile(profile ?? null);
       } else {
         setUser(null);
@@ -39,28 +43,21 @@ export function AuthProvider({ children }) {
   const register = (email, password) => registerWithEmail(email, password);
 
   /**
-   * Called from CompleteProfilePage after registration to create the Firestore user doc.
-   * @param {{ displayName: string, birthday: string, photoFile: File|null }} profileData
+   * Called from CompleteProfilePage after registration to create the MongoDB user doc.
+   * @param {{ displayName: string, birthday: string }} profileData
    */
-  const completeProfile = async ({ displayName, birthday, photoFile }) => {
+  const completeProfile = async ({ displayName, birthday }) => {
     if (!auth.currentUser) throw new Error('No authenticated user');
-    const created = await createUserProfile(auth.currentUser.uid, {
-      displayName,
-      birthday,
-      photoFile: photoFile ?? null,
-      email: auth.currentUser.email,
-    });
-    setUserProfile({
-      id: auth.currentUser.uid,
-      ...created,
-      profileCompleted: true,
-    });
+    const idToken = await auth.currentUser.getIdToken();
+    const created = await createUserProfile(idToken, { displayName, birthday });
+    setUserProfile(created);
   };
 
   const updateProfile = async (updates) => {
     if (!auth.currentUser) throw new Error('No authenticated user');
-    await updateUserProfile(auth.currentUser.uid, updates);
-    setUserProfile((prev) => (prev ? { ...prev, ...updates } : prev));
+    const idToken = await auth.currentUser.getIdToken();
+    const updated = await updateUserProfile(idToken, updates);
+    setUserProfile(updated);
   };
 
   const logout = async () => {

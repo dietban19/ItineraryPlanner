@@ -1,66 +1,85 @@
-import {
-  doc,
-  setDoc,
-  getDoc,
-  updateDoc,
-  serverTimestamp,
-} from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { db, storage } from '../lib/firebase';
+const API_URL = import.meta.env.VITE_API_URL;
 
 /**
- * Creates a user profile document in Firestore after registration.
- * Optionally uploads a profile photo to Firebase Storage.
+ * Creates a user profile in MongoDB after registration.
  *
- * @param {string} uid - Firebase Auth UID
- * @param {{ displayName: string, birthday: string, photoFile: File|null, email: string }} profileData
+ * @param {string} idToken - Firebase ID token for auth
+ * @param {{ displayName: string, birthday: string }} profileData
  * @returns {Promise<object>} The created profile data
  */
-export const createUserProfile = async (
-  uid,
-  { displayName, birthday, photoFile, email },
-) => {
-  let photoURL = '';
+export const createUserProfile = async (idToken, { displayName, birthday }) => {
+  const res = await fetch(`${API_URL}/users/sync`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${idToken}`,
+    },
+    body: JSON.stringify({
+      displayName,
+      birthday,
+      profileCompleted: true,
+    }),
+  });
 
-  if (photoFile) {
-    const storageRef = ref(storage, `avatars/${uid}`);
-    await uploadBytes(storageRef, photoFile);
-    photoURL = await getDownloadURL(storageRef);
-  }
-
-  const profileDoc = {
-    displayName,
-    birthday,
-    photoURL,
-    email,
-    profileCompleted: true,
-    createdAt: serverTimestamp(),
-  };
-
-  await setDoc(doc(db, 'users', uid), profileDoc);
-  return profileDoc;
+  if (!res.ok) throw new Error('Failed to create user profile');
+  return res.json();
 };
 
 /**
- * Fetches a user profile document from Firestore.
+ * Syncs the Firebase user into MongoDB (upsert). Called on every auth state load.
  *
- * @param {string} uid
+ * @param {string} idToken - Firebase ID token
+ * @param {object} [profileData] - Optional profile fields to set
  * @returns {Promise<object|null>}
  */
-export const getUserProfile = async (uid) => {
-  const snap = await getDoc(doc(db, 'users', uid));
-  return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+export const syncUserProfile = async (idToken, profileData = {}) => {
+  console.log('\n\nSYNC USER PROFILE: ', idToken, profileData);
+  const res = await fetch(`${API_URL}/users/sync`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${idToken}`,
+    },
+    body: JSON.stringify(profileData),
+  });
+
+  if (!res.ok) return null;
+  return res.json();
 };
 
 /**
- * Updates fields on an existing user profile document.
+ * Fetches the current user's profile from MongoDB.
  *
- * @param {string} uid
- * @param {object} updates
+ * @param {string} idToken - Firebase ID token
+ * @returns {Promise<object|null>}
  */
-export const updateUserProfile = async (uid, updates) => {
-  await updateDoc(doc(db, 'users', uid), {
-    ...updates,
-    updatedAt: serverTimestamp(),
+export const getUserProfile = async (idToken) => {
+  const res = await fetch(`${API_URL}/users/me`, {
+    headers: { Authorization: `Bearer ${idToken}` },
   });
+
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error('Failed to fetch user profile');
+  return res.json();
+};
+
+/**
+ * Updates fields on the current user's profile in MongoDB.
+ *
+ * @param {string} idToken - Firebase ID token
+ * @param {object} updates
+ * @returns {Promise<object>}
+ */
+export const updateUserProfile = async (idToken, updates) => {
+  const res = await fetch(`${API_URL}/users/me`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${idToken}`,
+    },
+    body: JSON.stringify(updates),
+  });
+
+  if (!res.ok) throw new Error('Failed to update user profile');
+  return res.json();
 };

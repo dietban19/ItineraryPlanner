@@ -1,5 +1,3 @@
-import ApiLog from '../models/ApiLog.js';
-
 const PLACES_SEARCH_URL = 'https://places.googleapis.com/v1/places:searchText';
 const OPEN_METEO_URL = 'https://api.open-meteo.com/v1/forecast';
 
@@ -24,14 +22,6 @@ function cacheSet(map, key, value) {
   map.set(key, { value, ts: Date.now() });
 }
 
-async function logApiCall(apiName) {
-  await ApiLog.findOneAndUpdate(
-    { apiName },
-    { $push: { calls: { calledAt: new Date() } } },
-    { upsert: true },
-  );
-}
-
 /**
  * Resolve lat/lng for a destination string via Google Places searchText.
  * @param {string} destination
@@ -42,7 +32,6 @@ async function getCoordinates(destination) {
   const cached = cacheGet(coordsCache, key, COORDS_TTL_MS);
   if (cached !== undefined) return cached;
 
-  await logApiCall('weather:getCoordinates');
   const response = await fetch(PLACES_SEARCH_URL, {
     method: 'POST',
     headers: {
@@ -91,7 +80,6 @@ export async function getWeatherForDestination(destination) {
   if (cached !== undefined) return cached;
 
   const { latitude, longitude } = await getCoordinates(destination);
-  console.log(latitude, longitude);
   const params = new URLSearchParams({
     latitude,
     longitude,

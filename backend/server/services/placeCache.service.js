@@ -3,21 +3,23 @@ import PlaceCache from '../models/PlaceCache.js';
 export async function persistPlaceImage(place) {
   if (!place?.placeId) return;
 
-  // already cached — same logic as your firebase snap.exists() check
-  const existing = await PlaceCache.findOne({ placeId: place.placeId });
-  if (existing) return;
-
-  await PlaceCache.create({
-    placeId: place.placeId,
-    name: place.name ?? null,
-    address: place.address ?? null,
-    rating: place.rating ?? null,
-    type: place.type ?? 'activity',
-    imageUrl: place.image ?? null,
-    cachedAt: new Date(),
-    details: null,
-    detailsCachedAt: null,
-  });
+  await PlaceCache.findOneAndUpdate(
+    { placeId: place.placeId },
+    {
+      $setOnInsert: {
+        placeId: place.placeId,
+        name: place.name ?? null,
+        address: place.address ?? null,
+        rating: place.rating ?? null,
+        type: place.type ?? 'activity',
+        imageUrl: place.image ?? null,
+        cachedAt: new Date(),
+        details: null,
+        detailsCachedAt: null,
+      },
+    },
+    { upsert: true },
+  );
 }
 
 export async function readCachedDetails(placeId) {
