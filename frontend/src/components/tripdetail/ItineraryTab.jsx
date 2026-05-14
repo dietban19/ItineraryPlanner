@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
+import TimePicker from './TimePicker';
 import {
   ArrowLeft,
   ChevronRight,
@@ -955,6 +956,7 @@ function PlaceDetailSheet({
   const [photoIndex, setPhotoIndex] = useState(0);
   const [timeVal, setTimeVal] = useState(() => toInputTime(initialTime));
   const [hoursExpanded, setHoursExpanded] = useState(false);
+  const [showTimePicker, setShowTimePicker] = useState(false);
   const touchStartX = useRef(null);
 
   useEffect(() => {
@@ -1337,7 +1339,10 @@ function PlaceDetailSheet({
       {/* ── Bottom bar: time + CTA ─────────────────────────────── */}
       <div className="shrink-0 border-t border-stone-100 bg-white px-5 py-4 space-y-3">
         {/* Time picker row */}
-        <div className="flex items-center gap-3 rounded-2xl bg-[#FAFAF8] px-4 py-3">
+        <button
+          onClick={() => setShowTimePicker(true)}
+          className="w-full flex items-center gap-3 rounded-2xl bg-[#FAFAF8] px-4 py-3 text-left active:bg-stone-100/80 transition-colors"
+        >
           <Clock
             size={16}
             strokeWidth={1.8}
@@ -1347,19 +1352,20 @@ function PlaceDetailSheet({
             <p className="font-display text-[11px] font-semibold uppercase tracking-wide text-stone-400">
               Time
             </p>
-            <input
-              type="time"
-              value={timeVal}
-              onChange={(e) => setTimeVal(e.target.value)}
-              className="font-display text-[14px] text-stone-900 bg-transparent outline-none w-full mt-0.5"
-            />
+            <p
+              className={`font-display text-[14px] mt-0.5 ${
+                timeVal ? 'text-stone-900' : 'text-stone-400'
+              }`}
+            >
+              {timeVal ? formatTime(timeVal) : 'Tap to set a time'}
+            </p>
           </div>
-          {timeVal && (
-            <span className="font-display text-[13px] font-medium text-stone-500">
-              {formatTime(timeVal)}
-            </span>
-          )}
-        </div>
+          <ChevronRight
+            size={15}
+            strokeWidth={1.8}
+            className="text-stone-300 shrink-0"
+          />
+        </button>
 
         <button
           onClick={handleCTA}
@@ -1368,6 +1374,15 @@ function PlaceDetailSheet({
           {mode === 'add' ? 'Add to Itinerary' : 'Save Changes'}
         </button>
       </div>
+
+      {/* Drum-roll time picker sheet */}
+      {showTimePicker && (
+        <TimePicker
+          value={timeVal}
+          onChange={setTimeVal}
+          onClose={() => setShowTimePicker(false)}
+        />
+      )}
     </div>
   );
 }

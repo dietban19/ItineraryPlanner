@@ -24,6 +24,21 @@ const TripsContext = createContext(null);
 
 const getToken = () => auth.currentUser?.getIdToken();
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Parse "9:30 AM" / "10:00 PM" → minutes since midnight for sorting. */
+function parseActivityTimeToMinutes(timeStr) {
+  if (!timeStr) return Infinity;
+  const match = timeStr.match(/^(\d+):(\d+)\s*(AM|PM)$/i);
+  if (!match) return Infinity;
+  let h = parseInt(match[1], 10);
+  const m = parseInt(match[2], 10);
+  const ap = match[3].toUpperCase();
+  if (ap === 'PM' && h !== 12) h += 12;
+  if (ap === 'AM' && h === 12) h = 0;
+  return h * 60 + m;
+}
+
 // ─── Provider ─────────────────────────────────────────────────────────────────
 
 export function TripsProvider({ children }) {
@@ -127,7 +142,14 @@ export function TripsProvider({ children }) {
       const day = trip.days.find((d) => d._id === dayId);
       if (!day) return;
       const activity = day.activities.find((a) => a._id === activityId);
-      if (activity) activity.time = time;
+      if (activity) {
+        activity.time = time;
+        day.activities.sort(
+          (a, b) =>
+            parseActivityTimeToMinutes(a.time) -
+            parseActivityTimeToMinutes(b.time),
+        );
+      }
     });
   }
 
@@ -153,6 +175,22 @@ export function TripsProvider({ children }) {
       const activity = day.activities.find((a) => a._id === activityId);
       if (!activity) return;
       activity.reviews = activity.reviews.filter((r) => r._id !== reviewId);
+    });
+  }
+
+  function toggleReviewLike(tripId, dayId, activityId, reviewId, userId) {
+    if (!userId) return;
+    updateTrip(tripId, (trip) => {
+      const day = trip.days.find((d) => d._id === dayId);
+      if (!day) return;
+      const activity = day.activities.find((a) => a._id === activityId);
+      if (!activity) return;
+      const review = activity.reviews.find((r) => r._id === reviewId);
+      if (!review) return;
+      if (!Array.isArray(review.likes)) review.likes = [];
+      const idx = review.likes.indexOf(userId);
+      if (idx === -1) review.likes.push(userId);
+      else review.likes.splice(idx, 1);
     });
   }
 
@@ -192,8 +230,18 @@ export function TripsProvider({ children }) {
   function generateDaysFromRange(start, end) {
     const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
     const MONTHS = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
     ];
     const s = new Date(start + 'T00:00:00');
     const e = end ? new Date(end + 'T00:00:00') : s;
@@ -255,7 +303,11 @@ export function TripsProvider({ children }) {
         setTrips((prev) =>
           prev.map((t) =>
             t._id === saved._id
-              ? new Trip({ ...t.toJSON(), image: imageUrl, coverImage: imageUrl })
+              ? new Trip({
+                  ...t.toJSON(),
+                  image: imageUrl,
+                  coverImage: imageUrl,
+                })
               : t,
           ),
         );
@@ -355,6 +407,7 @@ export function TripsProvider({ children }) {
     updateActivityTime,
     addReview,
     deleteReview,
+    toggleReviewLike,
     updateDayTitle,
     addDay,
     updateBudget,

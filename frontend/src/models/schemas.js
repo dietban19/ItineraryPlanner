@@ -39,6 +39,7 @@ export class ActivityReview {
     rating = 0,
     comment = '',
     addedAt = null,
+    likes = [],
   } = {}) {
     this._id = _id ?? cid();
     this.userId = userId; // null until auth is wired
@@ -47,6 +48,7 @@ export class ActivityReview {
     this.rating = rating; // 0–5 star rating
     this.comment = comment; // Review text
     this.addedAt = addedAt ?? new Date().toISOString();
+    this.likes = likes; // Array<string> — userIds who liked this review
   }
 }
 
