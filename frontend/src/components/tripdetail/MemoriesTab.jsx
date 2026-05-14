@@ -8,8 +8,11 @@ import {
   CheckCircle,
   Circle,
   Trash2,
+  Loader,
 } from 'lucide-react';
 import { useTrip, useTrips } from '../../context/TripContext';
+import { useAuth } from '../../context/AuthContext';
+import { uploadImage } from '../../services/upload.service';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -25,8 +28,7 @@ function Avatar({ name, size = 28 }) {
     'bg-teal-400',
     'bg-orange-400',
   ];
-  const idx =
-    name.charCodeAt(0) % COLORS.length;
+  const idx = name.charCodeAt(0) % COLORS.length;
   return (
     <div
       className={`${COLORS[idx]} rounded-full flex items-center justify-center shrink-0 text-white font-bold`}
@@ -45,7 +47,9 @@ function StarDisplay({ value }) {
           key={s}
           size={12}
           strokeWidth={1.5}
-          className={s <= value ? 'text-amber-400 fill-amber-400' : 'text-stone-200'}
+          className={
+            s <= value ? 'text-amber-400 fill-amber-400' : 'text-stone-200'
+          }
         />
       ))}
     </div>
@@ -56,11 +60,17 @@ function StarRating({ value, onChange }) {
   return (
     <div className="flex gap-1">
       {[1, 2, 3, 4, 5].map((s) => (
-        <button key={s} onClick={() => onChange(s === value ? 0 : s)} className="p-0.5">
+        <button
+          key={s}
+          onClick={() => onChange(s === value ? 0 : s)}
+          className="p-0.5"
+        >
           <Star
             size={22}
             strokeWidth={1.5}
-            className={s <= value ? 'text-amber-400 fill-amber-400' : 'text-stone-200'}
+            className={
+              s <= value ? 'text-amber-400 fill-amber-400' : 'text-stone-200'
+            }
           />
         </button>
       ))}
@@ -114,31 +124,60 @@ function ReviewItem({ review, onDelete }) {
 }
 
 // ─── AddReviewForm ────────────────────────────────────────────────────────────
-function AddReviewForm({ onSubmit, onCancel }) {
-  const [userName, setUserName] = useState('');
+function AddReviewForm({ userName, userId, onSubmit, onCancel }) {
   const [rating, setRating] = useState(0);
   const [comment, setComment] = useState('');
-  const [photos, setPhotos] = useState([]);
+  // Each entry: { localUrl, file }
+  const [photoItems, setPhotoItems] = useState([]);
+  const [submitting, setSubmitting] = useState(false);
 
-  function handleSubmit() {
-    if (!userName.trim()) return;
-    onSubmit({ userName: userName.trim(), rating, comment, photos });
+  async function handleSubmit() {
+    setSubmitting(true);
+    try {
+      const uploadedUrls = await Promise.all(
+        photoItems.map(async (item) => {
+          try {
+            return await uploadImage(item.file);
+          } catch {
+            return item.localUrl; // fallback to local blob url if upload fails
+          }
+        }),
+      );
+      onSubmit({
+        userName,
+        userId,
+        rating,
+        comment,
+        photos: uploadedUrls,
+        addedAt: new Date().toISOString(),
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  function handleFileChange(e) {
+    const newItems = Array.from(e.target.files).map((file) => ({
+      localUrl: URL.createObjectURL(file),
+      file,
+    }));
+    setPhotoItems((p) => [...p, ...newItems]);
+    e.target.value = '';
+  }
+
+  function removePhoto(i) {
+    setPhotoItems((p) => {
+      URL.revokeObjectURL(p[i].localUrl);
+      return p.filter((_, j) => j !== i);
+    });
   }
 
   return (
     <div className="flex flex-col gap-3 bg-stone-50 rounded-2xl p-4 border border-stone-100">
-      {/* Name */}
-      <div>
-        <p className="text-[0.65rem] font-bold text-stone-400 uppercase tracking-wider mb-1.5">
-          Your Name
-        </p>
-        <input
-          type="text"
-          value={userName}
-          onChange={(e) => setUserName(e.target.value)}
-          placeholder="e.g. Alex"
-          className="w-full bg-white border border-stone-100 rounded-xl px-3 py-2.5 text-sm text-stone-800 placeholder-stone-300 outline-none"
-        />
+      {/* Author */}
+      <div className="flex items-center gap-2">
+        <Avatar name={userName} size={28} />
+        <span className="text-sm font-semibold text-stone-700">{userName}</span>
       </div>
 
       {/* Rating */}
@@ -169,11 +208,18 @@ function AddReviewForm({ onSubmit, onCancel }) {
           Photos
         </p>
         <div className="flex flex-wrap gap-2">
-          {photos.map((src, i) => (
-            <div key={i} className="relative w-16 h-16 rounded-xl overflow-hidden">
-              <img src={src} alt="" className="w-full h-full object-cover" />
+          {photoItems.map((item, i) => (
+            <div
+              key={i}
+              className="relative w-16 h-16 rounded-xl overflow-hidden"
+            >
+              <img
+                src={item.localUrl}
+                alt=""
+                className="w-full h-full object-cover"
+              />
               <button
-                onClick={() => setPhotos((p) => p.filter((_, j) => j !== i))}
+                onClick={() => removePhoto(i)}
                 className="absolute top-0.5 right-0.5 bg-black/50 rounded-full p-0.5"
               >
                 <X size={9} className="text-white" />
@@ -182,20 +228,15 @@ function AddReviewForm({ onSubmit, onCancel }) {
           ))}
           <label className="w-16 h-16 rounded-xl bg-white border border-dashed border-stone-200 flex flex-col items-center justify-center gap-1 cursor-pointer active:bg-stone-50">
             <ImagePlus size={16} className="text-stone-300" strokeWidth={1.5} />
-            <span className="text-[0.55rem] text-stone-300 font-medium">Add</span>
+            <span className="text-[0.55rem] text-stone-300 font-medium">
+              Add
+            </span>
             <input
               type="file"
               accept="image/*"
               multiple
               className="hidden"
-              onChange={(e) => {
-                // TODO: replace URL.createObjectURL with S3/Cloudinary upload when backend is ready
-                const urls = Array.from(e.target.files).map((f) =>
-                  URL.createObjectURL(f),
-                );
-                setPhotos((p) => [...p, ...urls]);
-                e.target.value = '';
-              }}
+              onChange={handleFileChange}
             />
           </label>
         </div>
@@ -205,16 +246,23 @@ function AddReviewForm({ onSubmit, onCancel }) {
       <div className="flex gap-2 pt-1">
         <button
           onClick={onCancel}
-          className="flex-1 py-2.5 rounded-xl bg-stone-100 text-sm font-semibold text-stone-500 active:bg-stone-200"
+          disabled={submitting}
+          className="flex-1 py-2.5 rounded-xl bg-stone-100 text-sm font-semibold text-stone-500 active:bg-stone-200 disabled:opacity-40"
         >
           Cancel
         </button>
         <button
           onClick={handleSubmit}
-          disabled={!userName.trim()}
-          className="flex-1 py-2.5 rounded-xl bg-stone-900 text-sm font-semibold text-white active:bg-stone-700 disabled:opacity-40"
+          disabled={submitting}
+          className="flex-1 py-2.5 rounded-xl bg-stone-900 text-sm font-semibold text-white active:bg-stone-700 disabled:opacity-40 flex items-center justify-center gap-2"
         >
-          Post Review
+          {submitting ? (
+            <>
+              <Loader size={14} className="animate-spin" /> Posting...
+            </>
+          ) : (
+            'Post Review'
+          )}
         </button>
       </div>
     </div>
@@ -222,8 +270,15 @@ function AddReviewForm({ onSubmit, onCancel }) {
 }
 
 // ─── MemoryCard ───────────────────────────────────────────────────────────────
-function MemoryCard({ tripId, dayId, activity }) {
-  const { addReview, deleteReview, markActivityDone, unmarkActivityDone } = useTrips();
+function MemoryCard({
+  tripId,
+  dayId,
+  activity,
+  currentUserName,
+  currentUserId,
+}) {
+  const { addReview, deleteReview, markActivityDone, unmarkActivityDone } =
+    useTrips();
   const isDone = activity.status === 'done';
   const [open, setOpen] = useState(false);
   const [showForm, setShowForm] = useState(false);
@@ -248,7 +303,9 @@ function MemoryCard({ tripId, dayId, activity }) {
   return (
     <div
       className={`rounded-2xl overflow-hidden border ${
-        isDone ? 'border-emerald-100 bg-emerald-50/40' : 'bg-stone-50 border-stone-100'
+        isDone
+          ? 'border-emerald-100 bg-emerald-50/40'
+          : 'bg-stone-50 border-stone-100'
       }`}
     >
       {/* Header row */}
@@ -258,21 +315,32 @@ function MemoryCard({ tripId, dayId, activity }) {
       >
         <div className="flex items-center gap-2 min-w-0">
           {isDone ? (
-            <CheckCircle size={15} strokeWidth={2} className="text-emerald-500 shrink-0" />
+            <CheckCircle
+              size={15}
+              strokeWidth={2}
+              className="text-emerald-500 shrink-0"
+            />
           ) : (
-            <Circle size={15} strokeWidth={1.8} className="text-stone-300 shrink-0" />
+            <Circle
+              size={15}
+              strokeWidth={1.8}
+              className="text-stone-300 shrink-0"
+            />
           )}
           <span className="text-sm font-semibold text-stone-800 truncate">
             {activity.name}
           </span>
           {activity.time ? (
-            <span className="text-[11px] text-stone-400 shrink-0">{activity.time}</span>
+            <span className="text-[11px] text-stone-400 shrink-0">
+              {activity.time}
+            </span>
           ) : null}
         </div>
         <div className="flex items-center gap-2 shrink-0">
           {activity.reviews.length > 0 && (
             <span className="text-[11px] font-semibold text-stone-400">
-              {activity.reviews.length} review{activity.reviews.length !== 1 ? 's' : ''}
+              {activity.reviews.length} review
+              {activity.reviews.length !== 1 ? 's' : ''}
             </span>
           )}
           <ChevronRight
@@ -308,6 +376,8 @@ function MemoryCard({ tripId, dayId, activity }) {
           {/* Add review / form toggle */}
           {showForm ? (
             <AddReviewForm
+              userName={currentUserName}
+              userId={currentUserId}
               onSubmit={handleAddReview}
               onCancel={() => setShowForm(false)}
             />
@@ -339,8 +409,18 @@ function MemoryCard({ tripId, dayId, activity }) {
 }
 
 // ─── DaySection ───────────────────────────────────────────────────────────────
-function DaySection({ tripId, day, isOpen, onToggle, onAddMemory }) {
-  const completedCount = day.activities.filter((a) => a.status === 'done').length;
+function DaySection({
+  tripId,
+  day,
+  isOpen,
+  onToggle,
+  onAddMemory,
+  currentUserName,
+  currentUserId,
+}) {
+  const completedCount = day.activities.filter(
+    (a) => a.status === 'done',
+  ).length;
 
   return (
     <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
@@ -372,7 +452,8 @@ function DaySection({ tripId, day, isOpen, onToggle, onAddMemory }) {
         <div className="px-4 pb-4 flex flex-col gap-2 border-t border-stone-50">
           {day.activities.length === 0 ? (
             <p className="text-xs text-stone-300 text-center py-3">
-              No activities planned for this day yet. Add some in the Itinerary tab.
+              No activities planned for this day yet. Add some in the Itinerary
+              tab.
             </p>
           ) : (
             day.activities.map((act) => (
@@ -381,6 +462,8 @@ function DaySection({ tripId, day, isOpen, onToggle, onAddMemory }) {
                 tripId={tripId}
                 dayId={day._id}
                 activity={act}
+                currentUserName={currentUserName}
+                currentUserId={currentUserId}
               />
             ))
           )}
@@ -402,7 +485,12 @@ function DaySection({ tripId, day, isOpen, onToggle, onAddMemory }) {
 export default function MemoriesTab({ tripId }) {
   const trip = useTrip(tripId);
   const { addActivity } = useTrips();
+  const { user, userProfile } = useAuth();
   const [openDays, setOpenDays] = useState({});
+
+  const currentUserId = user?.uid ?? null;
+  const currentUserName =
+    userProfile?.displayName ?? user?.displayName ?? 'Anonymous';
 
   if (!trip) return null;
 
@@ -437,6 +525,8 @@ export default function MemoriesTab({ tripId }) {
           isOpen={!!openDays[day._id]}
           onToggle={() => toggle(day._id)}
           onAddMemory={handleAddMemory}
+          currentUserName={currentUserName}
+          currentUserId={currentUserId}
         />
       ))}
     </div>

@@ -1,4 +1,4 @@
-import express from 'express';
+hatimport express from 'express';
 import { getWeather } from '../controllers/weather.controller.js';
 
 const router = express.Router();

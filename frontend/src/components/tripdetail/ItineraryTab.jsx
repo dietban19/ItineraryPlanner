@@ -12,7 +12,6 @@ import {
   Clock,
   Globe,
   Phone,
-  ChevronLeft,
 } from 'lucide-react';
 import { useTrip, useTrips } from '../../context/TripContext';
 import { searchPlaces, getPlaceDetails } from '../../services/places.service';
@@ -952,11 +951,11 @@ function PlaceDetailSheet({
 }) {
   const [details, setDetails] = useState(null);
   const [loadingDetails, setLoadingDetails] = useState(!!place.placeId);
-  const [heroFailed, setHeroFailed] = useState(false);
   const [entered, setEntered] = useState(false);
   const [photoIndex, setPhotoIndex] = useState(0);
   const [timeVal, setTimeVal] = useState(() => toInputTime(initialTime));
   const [hoursExpanded, setHoursExpanded] = useState(false);
+  const touchStartX = useRef(null);
 
   useEffect(() => {
     requestAnimationFrame(() => setEntered(true));
@@ -981,7 +980,6 @@ function PlaceDetailSheet({
     : place.image
       ? [place.image]
       : [];
-  const heroImage = photos[photoIndex] ?? null;
 
   const displayRating = details?.rating ?? place.rating;
   const displayAddress = details?.address ?? place.address;
@@ -1004,14 +1002,43 @@ function PlaceDetailSheet({
     >
       {/* ── Hero ──────────────────────────────────────────────── */}
       <div className="relative w-full shrink-0" style={{ aspectRatio: '16/9' }}>
-        <div className="absolute inset-0 bg-stone-200 overflow-hidden">
-          {heroImage && !heroFailed ? (
-            <img
-              src={heroImage}
-              alt={displayName}
-              className="absolute inset-0 h-full w-full object-cover"
-              onError={() => setHeroFailed(true)}
-            />
+        {/* Swipeable photo strip */}
+        <div
+          className="absolute inset-0 bg-stone-200 overflow-hidden"
+          onTouchStart={(e) => {
+            touchStartX.current = e.touches[0].clientX;
+          }}
+          onTouchEnd={(e) => {
+            if (touchStartX.current === null) return;
+            const dx = e.changedTouches[0].clientX - touchStartX.current;
+            touchStartX.current = null;
+            if (dx < -50 && photoIndex < photos.length - 1)
+              setPhotoIndex((i) => i + 1);
+            else if (dx > 50 && photoIndex > 0) setPhotoIndex((i) => i - 1);
+          }}
+        >
+          {photos.length > 0 ? (
+            <div
+              className="flex h-full transition-transform duration-300 ease-out"
+              style={{
+                width: `${photos.length * 100}%`,
+                transform: `translateX(${-photoIndex * (100 / photos.length)}%)`,
+              }}
+            >
+              {photos.map((src, i) => (
+                <div
+                  key={i}
+                  className="relative h-full shrink-0"
+                  style={{ width: `${100 / photos.length}%` }}
+                >
+                  <img
+                    src={src}
+                    alt={displayName}
+                    className="absolute inset-0 h-full w-full object-cover"
+                  />
+                </div>
+              ))}
+            </div>
           ) : (
             <div className="absolute inset-0 grid place-items-center text-stone-300">
               <MapPin size={44} strokeWidth={1.3} />
@@ -1031,41 +1058,18 @@ function PlaceDetailSheet({
           <ArrowLeft size={19} strokeWidth={2} />
         </button>
 
-        {/* Photo navigation */}
+        {/* Dots indicator */}
         {photos.length > 1 && (
-          <>
-            <button
-              onClick={() => setPhotoIndex((i) => Math.max(0, i - 1))}
-              className="absolute left-4 top-1/2 -translate-y-1/2 flex h-8 w-8 items-center justify-center rounded-full bg-black/25 backdrop-blur-sm text-white disabled:opacity-30"
-              disabled={photoIndex === 0}
-              aria-label="Previous photo"
-            >
-              <ChevronLeft size={18} strokeWidth={2} />
-            </button>
-            <button
-              onClick={() =>
-                setPhotoIndex((i) => Math.min(photos.length - 1, i + 1))
-              }
-              className="absolute right-4 top-1/2 -translate-y-1/2 flex h-8 w-8 items-center justify-center rounded-full bg-black/25 backdrop-blur-sm text-white disabled:opacity-30"
-              disabled={photoIndex === photos.length - 1}
-              aria-label="Next photo"
-            >
-              <ChevronRight size={18} strokeWidth={2} />
-            </button>
-
-            {/* Dots */}
-            <div className="absolute bottom-14 left-0 right-0 flex justify-center gap-1.5">
-              {photos.map((_, i) => (
-                <button
-                  key={i}
-                  onClick={() => setPhotoIndex(i)}
-                  className={`h-1.5 rounded-full transition-all ${
-                    i === photoIndex ? 'w-5 bg-white' : 'w-1.5 bg-white/50'
-                  }`}
-                />
-              ))}
-            </div>
-          </>
+          <div className="absolute bottom-14 left-0 right-0 flex justify-center gap-1.5 pointer-events-none">
+            {photos.map((_, i) => (
+              <div
+                key={i}
+                className={`h-1.5 rounded-full transition-all duration-200 ${
+                  i === photoIndex ? 'w-5 bg-white' : 'w-1.5 bg-white/50'
+                }`}
+              />
+            ))}
+          </div>
         )}
 
         {/* Name + address overlay */}

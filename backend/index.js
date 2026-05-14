@@ -9,6 +9,7 @@ import prayerRouter from './server/routes/prayer.routes.js';
 import geocodeRouter from './server/routes/geocode.routes.js';
 import userRouter from './server/routes/user.routes.js';
 import tripRouter from './server/routes/trip.routes.js';
+import uploadRouter from './server/routes/upload.routes.js';
 import { connectDB } from './server/config/db.js';
 
 dotenv.config();
@@ -49,6 +50,7 @@ app.use('/api', prayerRouter);
 app.use('/api', geocodeRouter);
 app.use('/api', userRouter);
 app.use('/api', tripRouter);
+app.use('/api', uploadRouter);
 
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok' });
